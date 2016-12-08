@@ -5,7 +5,7 @@ using namespace std;
 
 struct StatementList;
 struct Statement {
-	enum Type { ADD, MOVE, INPUT, OUTPUT, LOOP, ZERO, PROGRAM } type;
+	enum Type { INCR, MOVE, INPUT, OUTPUT, LOOP, ADD, PROGRAM } type;
 	int offset, count;
 	unique_ptr<StatementList> body;
 };
@@ -24,7 +24,7 @@ unique_ptr<StatementList> parse(istream& is, int baseOffset) {
 		for (const auto& pa : adds) {
 			int offset = pa.first, count = pa.second;
 			if (count != 0)
-				ret->statements.push_back({Statement::ADD, offset, count, nullptr});
+				ret->statements.push_back({Statement::INCR, offset, count, nullptr});
 		}
 		adds.clear();
 	};
@@ -77,36 +77,57 @@ Statement parseProgram(istream& is) {
 	return {Statement::PROGRAM, 0, 1, move(body)};
 }
 
-Statement optimizeZeroes(Statement program) {
-	if (!program.body)
-		return program;
-	vector<Statement>& stmts = program.body->statements;
-	if (program.type == Statement::LOOP && !program.body->moves && stmts.size() == 1) {
-		const Statement& st = stmts.front();
-		if (st.type == Statement::ADD && st.count % 2 != 0 && st.offset == program.offset)
-			return {Statement::ZERO, program.offset, 1, nullptr};
+pair<int, int> minMaxOffsets(const Statement& st) {
+	pair<int, int> ret{st.offset, st.offset};
+	if (st.body) {
+		for (const Statement& st2 : st.body->statements) {
+			auto pa = minMaxOffsets(st2);
+			ret.first = min(ret.first, pa.first);
+			ret.second = max(ret.second, pa.first);
+		}
 	}
-	for (auto& st : stmts)
-		st = optimizeZeroes(move(st));
-	return program;
+	return ret;
 }
 
-void transpile(const Statement& st, ostream& os, int indent = 0) {
+Statement optimizeAdds(Statement st) {
+	if (!st.body) return st;
+	vector<Statement>& stmts = st.body->statements;
+	for (auto& st2 : stmts)
+		st2 = optimizeAdds(move(st2));
+
+	if (st.type != Statement::LOOP || st.body->moves) return st;
+	int loopIncr = 0;
+	for (const Statement& st2 : stmts) {
+		if (st2.type != Statement::INCR) return st;
+		if (st2.offset == st.offset) loopIncr += st2.count;
+	}
+	if (abs(loopIncr) != 1) return st;
+	if (loopIncr == 1) {
+		for (Statement& st2 : stmts)
+			st2.offset = -st2.offset;
+		loopIncr = -1;
+	}
+	return {Statement::ADD, st.offset, 1, move(st.body)};
+}
+
+void transpile(const Statement& st, ostream& os, int& idcount, int indent = 0) {
 	auto line = [&]() -> ostream& {
 		return os << '\n' << string(indent*2, ' ');
 	};
 	if (st.type == Statement::PROGRAM) {
+		pair<int, int> offsets = minMaxOffsets(st);
+		int bufSize = 30000 + offsets.second - offsets.first;
 		os << "#include <stdio.h>\n";
 		os << "#include <stdint.h>\n";
 		os << "\n";
 		os << "int main(int argc, char** argv) {\n";
-		os << "  uint8_t buffer[30000] = {0};\n";
-		os << "  int pos = 0;";
+		os << "  uint8_t buffer[" << bufSize << "] = {0};\n";
+		os << "  int pos = " << -offsets.first << ";";
 		for (const Statement& st2 : st.body->statements)
-			transpile(st2, os, indent + 1);
+			transpile(st2, os, idcount, indent + 1);
 		os << "\n}\n" << flush;
 	}
-	else if (st.type == Statement::ADD) {
+	else if (st.type == Statement::INCR) {
 		line() << "buffer[pos + " << st.offset << "] += " << st.count << ";";
 	}
 	else if (st.type == Statement::MOVE) {
@@ -118,13 +139,23 @@ void transpile(const Statement& st, ostream& os, int indent = 0) {
 	else if (st.type == Statement::OUTPUT) {
 		line() << "putchar(buffer[pos + " << st.offset << "]);";
 	}
-	else if (st.type == Statement::ZERO) {
+	else if (st.type == Statement::ADD) {
+		int id = -1;
+		if (st.body->statements.size() > 1) {
+			id = idcount++;
+			line() << "int tmp" << id << " = buffer[pos + " << st.offset << "];";
+		}
 		line() << "buffer[pos + " << st.offset << "] = 0;";
+		for (const Statement& st2 : st.body->statements) {
+			if (st2.offset == st.offset) continue;
+			assert(id != -1);
+			line() << "buffer[pos + " << st2.offset << "] += tmp" << id << " * " << st2.count << ";";
+		}
 	}
 	else if (st.type == Statement::LOOP) {
 		line() << "while (buffer[pos + " << st.offset << "]) {";
 		for (const Statement& st2 : st.body->statements)
-			transpile(st2, os, indent + 1);
+			transpile(st2, os, idcount, indent + 1);
 		line() << "}";
 	}
 	else assert(0);
@@ -138,6 +169,7 @@ int main(int argc, char** argv) {
 		cerr << "Parse error: " << err << endl;
 		return 1;
 	}
-	program = optimizeZeroes(move(program));
-	transpile(program, cout);
+	program = optimizeAdds(move(program));
+	int idcount = 0;
+	transpile(program, cout, idcount);
 }
