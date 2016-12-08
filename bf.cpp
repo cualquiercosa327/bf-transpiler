@@ -121,39 +121,39 @@ void transpile(const Statement& st, ostream& os, int& idcount, int indent = 0) {
 		os << "#include <stdint.h>\n";
 		os << "\n";
 		os << "int main(int argc, char** argv) {\n";
-		os << "  uint8_t buffer[" << bufSize << "] = {0};\n";
-		os << "  int pos = " << -offsets.first << ";";
+		os << "  uint8_t buffer[" << bufSize << "] = {0}, "
+		     << "*ptr = buffer + " << -offsets.first << ";\n";
 		for (const Statement& st2 : st.body->statements)
 			transpile(st2, os, idcount, indent + 1);
 		os << "\n}\n" << flush;
 	}
 	else if (st.type == Statement::INCR) {
-		line() << "buffer[pos + " << st.offset << "] += " << st.count << ";";
+		line() << "ptr[" << st.offset << "] += " << st.count << ";";
 	}
 	else if (st.type == Statement::MOVE) {
-		line() << "pos += " << st.count << ";";
+		line() << "ptr += " << st.count << ";";
 	}
 	else if (st.type == Statement::INPUT) {
-		line() << "buffer[pos + " << st.offset << "] = getchar();";
+		line() << "ptr[" << st.offset << "] = getchar();";
 	}
 	else if (st.type == Statement::OUTPUT) {
-		line() << "putchar(buffer[pos + " << st.offset << "]);";
+		line() << "putchar(ptr[" << st.offset << "]);";
 	}
 	else if (st.type == Statement::ADD) {
 		int id = -1;
 		if (st.body->statements.size() > 1) {
 			id = idcount++;
-			line() << "int tmp" << id << " = buffer[pos + " << st.offset << "];";
+			line() << "int tmp" << id << " = ptr[" << st.offset << "];";
 		}
-		line() << "buffer[pos + " << st.offset << "] = 0;";
+		line() << "ptr[" << st.offset << "] = 0;";
 		for (const Statement& st2 : st.body->statements) {
 			if (st2.offset == st.offset) continue;
 			assert(id != -1);
-			line() << "buffer[pos + " << st2.offset << "] += tmp" << id << " * " << st2.count << ";";
+			line() << "ptr[" << st2.offset << "] += tmp" << id << " * " << st2.count << ";";
 		}
 	}
 	else if (st.type == Statement::LOOP) {
-		line() << "while (buffer[pos + " << st.offset << "]) {";
+		line() << "while (ptr[" << st.offset << "]) {";
 		for (const Statement& st2 : st.body->statements)
 			transpile(st2, os, idcount, indent + 1);
 		line() << "}";
