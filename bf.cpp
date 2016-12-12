@@ -1,6 +1,8 @@
-#include <vector>
+#include <cassert>
 #include <iostream>
+#include <map>
 #include <memory>
+#include <vector>
 using namespace std;
 
 struct StatementList;
